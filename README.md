@@ -43,13 +43,24 @@ Opens the dashboard at <http://localhost:8080> after running a scan.
 
 ### OpenRouter (optional)
 
-OpenRouter is a cloud-only service, so you need an API key with analytics-read scope (typically a "provisioning"/management key from the OpenRouter dashboard). Drop it in a `.env` file in the repo root:
+OpenRouter is cloud-only — there's no local DB to scrape, so the scanner calls `GET /api/v1/activity`.
+
+> [!IMPORTANT]
+> **A regular OpenRouter inference API key (`sk-or-v1-…`) will not work.** The activity endpoint requires a **provisioning key** (a.k.a. management key) with analytics-read scope. Inference keys return `401 User not found`.
+>
+> Generate one at <https://openrouter.ai/settings/provisioning-keys> — it's a separate key type from the keys you use to call models.
+
+Drop the provisioning key in a `.env` file in the repo root:
 
 ```
-OPENROUTER_API_KEY=sk-or-v1-…
+OPENROUTER_API_KEY=<your provisioning key>
 ```
 
-`.env` is gitignored. The scan will skip OpenRouter cleanly if the key isn't set.
+`.env` is gitignored. The scan skips OpenRouter cleanly if the key isn't set, and surfaces the `401` body if you accidentally use the wrong key type.
+
+Other limits inherited from the API:
+- Only the **last 30 completed UTC days** are returned. Data captured locally persists indefinitely, so periodic scanning gives you a long history.
+- Granularity is daily per `(model, endpoint)` — there's no per-request enumeration.
 
 ---
 

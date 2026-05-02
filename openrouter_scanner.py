@@ -8,8 +8,11 @@ OpenRouter only exposes daily, per-(model, endpoint) aggregates for the last
 OpenRouter's reported USD cost (paid + BYOK inference) and stash it in the
 sessions.actual_cost_usd column instead of computing one from token counts.
 
-Requires the env var OPENROUTER_API_KEY to be set to a key with
-analytics-read scope (typically a "provisioning"/management key).
+Requires OPENROUTER_API_KEY (loaded from env or a .env file in this repo).
+This must be a *provisioning* key with analytics-read scope, NOT a regular
+inference key — generate one at:
+    https://openrouter.ai/settings/provisioning-keys
+Inference keys (`sk-or-v1-…` used for chat completions) get a 401 here.
 """
 
 import json
@@ -140,6 +143,10 @@ def scan(api_key=None, db_path=DB_PATH, verbose=True):
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")[:200]
         print(f"  OpenRouter API error {e.code}: {body}")
+        if e.code in (401, 403):
+            print("  Hint: /api/v1/activity needs a *provisioning* key with")
+            print("  analytics-read scope, not a normal inference key.")
+            print("  Generate one at https://openrouter.ai/settings/provisioning-keys")
         return {"new": 0, "updated": 0, "skipped": 0, "turns": 0, "sessions": 0}
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         print(f"  OpenRouter request failed: {e}")
