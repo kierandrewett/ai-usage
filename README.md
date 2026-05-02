@@ -1,109 +1,104 @@
-# Claude Code Usage Dashboard
+# AI Usage Dashboard
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![claude-code](https://img.shields.io/badge/claude--code-black?style=flat-square)](https://claude.ai/code)
 
-**Pro and Max subscribers get a progress bar. This gives you the full picture.**
+> A fork of [phuryn/claude-usage](https://github.com/phuryn/claude-usage) extended with **opencode** and **OpenRouter** as additional data sources, provider tagging, sub-day time ranges, pagination, and authoritative cost reporting where the upstream provider exposes it.
 
-Claude Code writes detailed usage logs locally — token counts, models, sessions, projects — regardless of your plan. This dashboard reads those logs and turns them into charts and cost estimates. Works on API, Pro, and Max plans.
+A local dashboard that pulls together usage from every coding-agent tool you use — Claude Code, opencode, and OpenRouter — into one SQLite-backed view with charts, per-model cost, per-provider filters, and per-session history.
 
-![Claude Usage Dashboard](docs/screenshot.png)
-
-**Created by:** [The Product Compass Newsletter](https://www.productcompass.pm)
+![Dashboard](docs/screenshot.png)
 
 ---
 
 ## What this tracks
 
-Works on **API, Pro, and Max plans** — Claude Code writes local usage logs regardless of subscription type. This tool reads those logs and gives you visibility that Anthropic's UI doesn't provide.
-
-Captures usage from:
-- **Claude Code CLI** (`claude` command in terminal)
-- **VS Code extension** (Claude Code sidebar)
-- **Dispatched Code sessions** (sessions routed through Claude Code)
+| Source | How it's read | Cost basis |
+|---|---|---|
+| **Claude Code** (CLI, VS Code extension, dispatched sessions) | Local JSONL transcripts in `~/.claude/projects/` | Anthropic API list pricing |
+| **opencode** | Local SQLite DB at `~/.local/share/opencode/opencode.db` | Upstream provider list pricing (OpenAI, Google, Moonshot, …) |
+| **OpenRouter** | `GET /api/v1/activity` (last 30 UTC days) | OpenRouter's reported `usage` USD |
 
 **Not captured:**
-- **Cowork sessions** — these run server-side and do not write local JSONL transcripts
+- Cowork / server-side Claude sessions (no local transcripts)
+- OpenRouter activity older than ~30 days that wasn't scanned in time (the API only returns the last 30 completed UTC days; data captured locally persists indefinitely)
 
 ---
 
 ## Requirements
 
 - Python 3.8+
-- No third-party packages — uses only the standard library (`sqlite3`, `http.server`, `json`, `pathlib`)
+- No third-party packages — uses only the standard library (`sqlite3`, `http.server`, `urllib`, `json`, `pathlib`)
 
-> Anyone running Claude Code already has Python installed.
+---
 
-## Quick Start
+## Quick start
 
-No `pip install`, no virtual environment, no build step.
-
-### Windows
-```
-git clone https://github.com/phuryn/claude-usage
-cd claude-usage
-python cli.py dashboard
-```
-
-### macOS / Linux
-```
-git clone https://github.com/phuryn/claude-usage
-cd claude-usage
+```bash
+git clone https://github.com/kierandrewett/ai-usage
+cd ai-usage
 python3 cli.py dashboard
 ```
+
+Opens the dashboard at <http://localhost:8080> after running a scan.
+
+### OpenRouter (optional)
+
+OpenRouter is a cloud-only service, so you need an API key with analytics-read scope (typically a "provisioning"/management key from the OpenRouter dashboard). Drop it in a `.env` file in the repo root:
+
+```
+OPENROUTER_API_KEY=sk-or-v1-…
+```
+
+`.env` is gitignored. The scan will skip OpenRouter cleanly if the key isn't set.
 
 ---
 
 ## Usage
 
-> On macOS/Linux, use `python3` instead of `python` in all commands below.
+```bash
+# Scan all sources and update the database (~/.claude/usage.db)
+python3 cli.py scan
 
-```
-# Scan JSONL files and populate the database (~/.claude/usage.db)
-python cli.py scan
+# Today's usage summary in the terminal
+python3 cli.py today
 
-# Show today's usage summary by model (in terminal)
-python cli.py today
+# All-time stats in the terminal
+python3 cli.py stats
 
-# Show all-time statistics (in terminal)
-python cli.py stats
-
-# Scan + open browser dashboard at http://localhost:8080
-python cli.py dashboard
+# Scan + open the browser dashboard
+python3 cli.py dashboard
 ```
 
-The scanner is incremental — it tracks each file's path and modification time, so re-running `scan` is fast and only processes new or changed files.
+The Claude Code and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
 
 ---
 
 ## How it works
 
-Claude Code writes one JSONL file per session to `~/.claude/projects/`. Each line is a JSON record; `assistant`-type records contain:
-- `message.usage.input_tokens` — raw prompt tokens
-- `message.usage.output_tokens` — generated tokens
-- `message.usage.cache_creation_input_tokens` — tokens written to prompt cache
-- `message.usage.cache_read_input_tokens` — tokens served from prompt cache
-- `message.model` — the model used (e.g. `claude-sonnet-4-6`)
+```
+┌─ Claude Code JSONLs ─┐
+│  opencode.db         │──▶ scanner.py / opencode_scanner.py / openrouter_scanner.py
+│  OpenRouter /activity│         │
+└──────────────────────┘         ▼
+                          ~/.claude/usage.db (SQLite)
+                                 │
+                                 ▼
+                          dashboard.py (localhost:8080)
+```
 
-`scanner.py` parses those files and stores the data in a SQLite database at `~/.claude/usage.db`.
-
-`dashboard.py` serves a single-page dashboard on `localhost:8080` with Chart.js charts (loaded from CDN). It auto-refreshes every 30 seconds and supports model filtering with bookmarkable URLs.
+The `sessions` table has a `source` column ("claude-code" / "opencode" / "openrouter") that drives the Provider tag and per-provider filter. Where a source reports authoritative cost (OpenRouter), it's stored in `actual_cost_usd` and the dashboard prefers it over token-based estimates.
 
 ---
 
 ## Cost estimates
 
-Costs are calculated using **Anthropic API pricing as of April 2026** ([claude.com/pricing#api](https://claude.com/pricing#api)).
+| Source | Pricing approach |
+|---|---|
+| Claude Code | Anthropic API list rates as of April 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
+| opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
+| OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
 
-**Only models whose name contains `opus`, `sonnet`, or `haiku` are included in cost calculations.** Local models, unknown models, and any other model names are excluded (shown as `n/a`).
-
-| Model | Input | Output | Cache Write | Cache Read |
-|-------|-------|--------|------------|-----------|
-| claude-opus-4-6 | $6.15/MTok | $30.75/MTok | $7.69/MTok | $0.61/MTok |
-| claude-sonnet-4-6 | $3.69/MTok | $18.45/MTok | $4.61/MTok | $0.37/MTok |
-| claude-haiku-4-5 | $1.23/MTok | $6.15/MTok | $1.54/MTok | $0.12/MTok |
-
-> **Note:** These are API prices. If you use Claude Code via a Max or Pro subscription, your actual cost structure is different (subscription-based, not per-token).
+For sources that go through subscription billing (GitHub Copilot via opencode, Pro/Max via Claude Code), the displayed "cost" is the **API-equivalent** — what you would have paid at metered list pricing. Your actual subscription bill will differ.
 
 ---
 
@@ -111,6 +106,14 @@ Costs are calculated using **Anthropic API pricing as of April 2026** ([claude.c
 
 | File | Purpose |
 |------|---------|
-| `scanner.py` | Parses JSONL transcripts, writes to `~/.claude/usage.db` |
+| `scanner.py` | Parses Claude Code JSONLs, writes to `~/.claude/usage.db` |
+| `opencode_scanner.py` | Reads opencode's SQLite DB into the same usage.db |
+| `openrouter_scanner.py` | Pulls OpenRouter daily activity rollups (requires `OPENROUTER_API_KEY`) |
 | `dashboard.py` | HTTP server + single-page HTML/JS dashboard |
 | `cli.py` | `scan`, `today`, `stats`, `dashboard` commands |
+
+---
+
+## Credit
+
+Forked from [phuryn/claude-usage](https://github.com/phuryn/claude-usage), originally created by [The Product Compass Newsletter](https://www.productcompass.pm). MIT licensed.

@@ -277,9 +277,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="footer-content">
     <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of April 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
     <p>
-      GitHub: <a href="https://github.com/phuryn/claude-usage" target="_blank">https://github.com/phuryn/claude-usage</a>
+      GitHub: <a href="https://github.com/kierandrewett/ai-usage" target="_blank">github.com/kierandrewett/ai-usage</a>
       &nbsp;&middot;&nbsp;
-      Created by: <a href="https://www.productcompass.pm" target="_blank">The Product Compass Newsletter</a>
+      Forked from: <a href="https://github.com/phuryn/claude-usage" target="_blank">phuryn/claude-usage</a> by <a href="https://www.productcompass.pm" target="_blank">The Product Compass Newsletter</a>
       &nbsp;&middot;&nbsp;
       License: MIT
     </p>
