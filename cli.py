@@ -16,23 +16,35 @@ from datetime import datetime, date
 DB_PATH = Path.home() / ".claude" / "usage.db"
 
 PRICING = {
-    "claude-opus-4-6":   {"input": 15.00, "output": 75.00},
-    "claude-opus-4-5":   {"input": 15.00, "output": 75.00},
-    "claude-sonnet-4-6": {"input":  3.00, "output": 15.00},
-    "claude-sonnet-4-5": {"input":  3.00, "output": 15.00},
-    "claude-haiku-4-5":  {"input":  0.80, "output":  4.00},
-    "claude-haiku-4-6":  {"input":  0.80, "output":  4.00},
-    "default":           {"input":  3.00, "output": 15.00},
+    "claude-opus-4-6":         {"input": 15.00, "output": 75.00},
+    "claude-opus-4-5":         {"input": 15.00, "output": 75.00},
+    "claude-sonnet-4-6":       {"input":  3.00, "output": 15.00},
+    "claude-sonnet-4-5":       {"input":  3.00, "output": 15.00},
+    "claude-haiku-4-5":        {"input":  0.80, "output":  4.00},
+    "claude-haiku-4-6":        {"input":  0.80, "output":  4.00},
+    # opencode-surfaced models (approximate API pricing per 1M tokens)
+    "gpt-5.5":                 {"input":  5.00, "output": 20.00},
+    "gpt-5.4":                 {"input":  2.50, "output": 10.00},
+    "gpt-5.4-mini":            {"input":  0.20, "output":  0.80},
+    "gpt-5.3-codex":           {"input":  5.00, "output": 20.00},
+    "gpt-5.3-codex-spark":     {"input":  5.00, "output": 20.00},
+    "gpt-5.1-codex":           {"input":  2.50, "output": 10.00},
+    "gemini-3.1-pro-preview":  {"input":  3.50, "output": 14.00},
+    "kimi-k2.6":               {"input":  0.15, "output":  2.50},
+    "default":                 {"input":  3.00, "output": 15.00},
 }
 
 def get_pricing(model):
     if not model:
         return PRICING["default"]
-    if model in PRICING:
-        return PRICING[model]
-    for key in PRICING:
-        if key != "default" and model.startswith(key):
-            return PRICING[key]
+    # opencode emits "<provider>/<model>"; pricing keys are bare model names.
+    bare = model.split("/", 1)[1] if "/" in model else model
+    for candidate in (model, bare):
+        if candidate in PRICING:
+            return PRICING[candidate]
+        for key in PRICING:
+            if key != "default" and candidate.startswith(key):
+                return PRICING[key]
     return PRICING["default"]
 
 def calc_cost(model, inp, out, cache_read, cache_creation):
@@ -70,6 +82,14 @@ def cmd_scan():
     from scanner import scan, PROJECTS_DIR
     print(f"Scanning {PROJECTS_DIR} ...")
     scan()
+
+    from opencode_scanner import scan as oc_scan, OPENCODE_DB_PATH
+    print(f"\nScanning {OPENCODE_DB_PATH} ...")
+    oc_scan()
+
+    from openrouter_scanner import scan as or_scan, API_URL as OR_API_URL
+    print(f"\nFetching {OR_API_URL} ...")
+    or_scan()
 
 
 def cmd_today():

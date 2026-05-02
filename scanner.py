@@ -32,7 +32,9 @@ def init_db(conn):
             total_cache_read        INTEGER DEFAULT 0,
             total_cache_creation    INTEGER DEFAULT 0,
             model           TEXT,
-            turn_count      INTEGER DEFAULT 0
+            turn_count      INTEGER DEFAULT 0,
+            source          TEXT,
+            actual_cost_usd REAL
         );
 
         CREATE TABLE IF NOT EXISTS turns (
@@ -58,6 +60,11 @@ def init_db(conn):
         CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
         CREATE INDEX IF NOT EXISTS idx_sessions_first ON sessions(first_timestamp);
     """)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "source" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN source TEXT")
+    if "actual_cost_usd" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN actual_cost_usd REAL")
     conn.commit()
 
 
@@ -189,7 +196,7 @@ def aggregate_sessions(session_metas, turns):
     for meta in session_metas:
         sid = meta["session_id"]
         stats = session_stats[sid]
-        result.append({**meta, **stats})
+        result.append({**meta, **stats, "source": "claude-code"})
     return result
 
 
@@ -207,14 +214,16 @@ def upsert_sessions(conn, sessions):
                 INSERT INTO sessions
                     (session_id, project_name, first_timestamp, last_timestamp,
                      git_branch, total_input_tokens, total_output_tokens,
-                     total_cache_read, total_cache_creation, model, turn_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     total_cache_read, total_cache_creation, model, turn_count,
+                     source, actual_cost_usd)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 s["session_id"], s["project_name"], s["first_timestamp"],
                 s["last_timestamp"], s["git_branch"],
                 s["total_input_tokens"], s["total_output_tokens"],
                 s["total_cache_read"], s["total_cache_creation"],
-                s["model"], s["turn_count"]
+                s["model"], s["turn_count"], s.get("source"),
+                s.get("actual_cost_usd"),
             ))
         else:
             # Update: add new tokens on top of existing (since we only insert new turns)
@@ -226,13 +235,16 @@ def upsert_sessions(conn, sessions):
                     total_cache_read = total_cache_read + ?,
                     total_cache_creation = total_cache_creation + ?,
                     turn_count = turn_count + ?,
-                    model = COALESCE(?, model)
+                    model = COALESCE(?, model),
+                    source = COALESCE(?, source),
+                    actual_cost_usd = COALESCE(?, actual_cost_usd)
                 WHERE session_id = ?
             """, (
                 s["last_timestamp"],
                 s["total_input_tokens"], s["total_output_tokens"],
                 s["total_cache_read"], s["total_cache_creation"],
-                s["turn_count"], s["model"],
+                s["turn_count"], s["model"], s.get("source"),
+                s.get("actual_cost_usd"),
                 s["session_id"]
             ))
 

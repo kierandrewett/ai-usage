@@ -30,21 +30,30 @@ def get_dashboard_data(db_path=DB_PATH):
     # ── Daily per-model, ALL history (client filters by range) ────────────────
     daily_rows = conn.execute("""
         SELECT
-            substr(timestamp, 1, 10)   as day,
-            COALESCE(model, 'unknown') as model,
-            SUM(input_tokens)          as input,
-            SUM(output_tokens)         as output,
-            SUM(cache_read_tokens)     as cache_read,
-            SUM(cache_creation_tokens) as cache_creation,
-            COUNT(*)                   as turns
-        FROM turns
-        GROUP BY day, model
-        ORDER BY day, model
+            substr(t.timestamp, 1, 10)        as day,
+            COALESCE(t.model, 'unknown')      as model,
+            COALESCE(s.source, 'claude-code') as source,
+            SUM(t.input_tokens)               as input,
+            SUM(t.output_tokens)              as output,
+            SUM(t.cache_read_tokens)          as cache_read,
+            SUM(t.cache_creation_tokens)      as cache_creation,
+            COUNT(*)                          as turns
+        FROM turns t
+        LEFT JOIN sessions s ON s.session_id = t.session_id
+        GROUP BY day, t.model, s.source
+        ORDER BY day, t.model
     """).fetchall()
+
+    SOURCE_TO_PROVIDER = {
+        "opencode":   "opencode",
+        "openrouter": "OpenRouter",
+        "claude-code": "Claude Code",
+    }
 
     daily_by_model = [{
         "day":            r["day"],
         "model":          r["model"],
+        "provider":       SOURCE_TO_PROVIDER.get(r["source"], "Claude Code"),
         "input":          r["input"] or 0,
         "output":         r["output"] or 0,
         "cache_read":     r["cache_read"] or 0,
@@ -57,7 +66,8 @@ def get_dashboard_data(db_path=DB_PATH):
         SELECT
             session_id, project_name, first_timestamp, last_timestamp,
             total_input_tokens, total_output_tokens,
-            total_cache_read, total_cache_creation, model, turn_count
+            total_cache_read, total_cache_creation, model, turn_count,
+            source, actual_cost_usd
         FROM sessions
         ORDER BY last_timestamp DESC
     """).fetchall()
@@ -70,8 +80,17 @@ def get_dashboard_data(db_path=DB_PATH):
             duration_min = round((t2 - t1).total_seconds() / 60, 1)
         except Exception:
             duration_min = 0
+        provider = SOURCE_TO_PROVIDER.get(r["source"], "Claude Code")
+        # OpenRouter "sessions" are daily rollups — date is more useful than
+        # the synthetic id prefix (which is identical for every OR row).
+        if r["source"] == "openrouter":
+            short_id = (r["last_timestamp"] or "")[:10] or r["session_id"][:8]
+        else:
+            short_id = r["session_id"][:8]
         sessions_all.append({
-            "session_id":    r["session_id"][:8],
+            "session_id":    short_id,
+            "provider":      provider,
+            "actual_cost":   r["actual_cost_usd"],
             "project":       r["project_name"] or "unknown",
             "last":          (r["last_timestamp"] or "")[:16].replace("T", " "),
             "last_date":     (r["last_timestamp"] or "")[:10],
@@ -86,8 +105,13 @@ def get_dashboard_data(db_path=DB_PATH):
 
     conn.close()
 
+    all_providers = sorted(
+        {s["provider"] for s in sessions_all} | {d["provider"] for d in daily_by_model}
+    )
+
     return {
         "all_models":     all_models,
+        "all_providers":  all_providers,
         "daily_by_model": daily_by_model,
         "sessions_all":   sessions_all,
         "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -99,7 +123,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Code Usage Dashboard</title>
+<title>AI Usage Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -122,7 +146,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   #filter-bar { background: var(--card); border-bottom: 1px solid var(--border); padding: 10px 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .filter-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
   .filter-sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
-  #model-checkboxes { display: flex; flex-wrap: wrap; gap: 6px; }
+  #model-checkboxes, #provider-checkboxes { display: flex; flex-wrap: wrap; gap: 6px; }
   .model-cb-label { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); cursor: pointer; font-size: 12px; color: var(--muted); transition: border-color 0.15s, color 0.15s, background 0.15s; user-select: none; }
   .model-cb-label:hover { border-color: var(--accent); color: var(--text); }
   .model-cb-label.checked { background: rgba(217,119,87,0.12); border-color: var(--accent); color: var(--text); }
@@ -155,6 +179,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.02); }
   .model-tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; background: rgba(79,142,247,0.15); color: var(--blue); }
+  .provider-tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
+  .provider-tag.cc { background: rgba(217,119,87,0.15); color: var(--accent); }
+  .provider-tag.oc { background: rgba(74,222,128,0.15); color: var(--green); }
+  .provider-tag.or { background: rgba(167,139,250,0.15); color: #a78bfa; }
+  .pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 12px; }
+  .pager .page-info { color: var(--muted); font-size: 12px; margin-right: 4px; }
+  .pager button { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+  .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
   .cost { color: var(--green); font-family: monospace; }
   .cost-na { color: var(--muted); font-family: monospace; font-size: 11px; }
   .num { font-family: monospace; }
@@ -174,11 +207,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>Claude Code Usage Dashboard</h1>
+  <h1>AI Usage Dashboard</h1>
   <div class="meta" id="meta">Loading...</div>
 </header>
 
 <div id="filter-bar">
+  <div class="filter-label">Providers</div>
+  <div id="provider-checkboxes"></div>
+  <div class="filter-sep"></div>
   <div class="filter-label">Models</div>
   <div id="model-checkboxes"></div>
   <button class="filter-btn" onclick="selectAllModels()">All</button>
@@ -186,10 +222,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="filter-sep"></div>
   <div class="filter-label">Range</div>
   <div class="range-group">
-    <button class="range-btn" data-range="7d"  onclick="setRange('7d')">7d</button>
-    <button class="range-btn" data-range="30d" onclick="setRange('30d')">30d</button>
-    <button class="range-btn" data-range="90d" onclick="setRange('90d')">90d</button>
-    <button class="range-btn" data-range="all" onclick="setRange('all')">All</button>
+    <button class="range-btn" data-range="3hr"  onclick="setRange('3hr')">3h</button>
+    <button class="range-btn" data-range="6hr"  onclick="setRange('6hr')">6h</button>
+    <button class="range-btn" data-range="12hr" onclick="setRange('12hr')">12h</button>
+    <button class="range-btn" data-range="1d"   onclick="setRange('1d')">1d</button>
+    <button class="range-btn" data-range="3d"   onclick="setRange('3d')">3d</button>
+    <button class="range-btn" data-range="7d"   onclick="setRange('7d')">7d</button>
+    <button class="range-btn" data-range="30d"  onclick="setRange('30d')">30d</button>
+    <button class="range-btn" data-range="90d"  onclick="setRange('90d')">90d</button>
+    <button class="range-btn" data-range="all"  onclick="setRange('all')">All</button>
   </div>
 </div>
 
@@ -213,11 +254,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="section-title">Recent Sessions</div>
     <table>
       <thead><tr>
-        <th>Session</th><th>Project</th><th>Last Active</th><th>Duration</th>
+        <th>Session</th><th>Provider</th><th>Project</th><th>Last Active</th><th>Duration</th>
         <th>Model</th><th>Turns</th><th>Input</th><th>Output</th><th>Est. Cost</th>
       </tr></thead>
       <tbody id="sessions-body"></tbody>
     </table>
+    <div id="sessions-pager" class="pager"></div>
   </div>
   <div class="table-card">
     <div class="section-title">Cost by Model</div>
@@ -233,7 +275,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <footer>
   <div class="footer-content">
-    <p>Cost estimates based on Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of April 2026. Only models containing <em>opus</em>, <em>sonnet</em>, or <em>haiku</em> in the name are included in cost calculations. Actual costs for Max/Pro subscribers differ from API pricing.</p>
+    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of April 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
     <p>
       GitHub: <a href="https://github.com/phuryn/claude-usage" target="_blank">https://github.com/phuryn/claude-usage</a>
       &nbsp;&middot;&nbsp;
@@ -248,36 +290,66 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 // ── State ──────────────────────────────────────────────────────────────────
 let rawData = null;
 let selectedModels = new Set();
+let selectedProviders = new Set();
 let selectedRange = '30d';
 let charts = {};
+let sessionsPage = 0;
+const SESSIONS_PAGE_SIZE = 20;
+let lastFilteredSessions = [];
 
-// ── Pricing (Anthropic API, April 2026) ────────────────────────────────────
+// ── Pricing (per 1M tokens, USD) ───────────────────────────────────────────
+// Anthropic numbers are Claude Code subscriber-equivalent (≈59% discount on
+// list API pricing, see footer). All non-Claude entries are list API pricing
+// for the corresponding upstream provider as of April 2026 — these are
+// approximate and may need updating.
 const PRICING = {
-  'claude-opus-4-6':   { input: 6.15,  output: 30.75, cache_write: 7.69, cache_read: 0.61 },
-  'claude-opus-4-5':   { input: 6.15,  output: 30.75, cache_write: 7.69, cache_read: 0.61 },
-  'claude-sonnet-4-6': { input: 3.69,  output: 18.45, cache_write: 4.61, cache_read: 0.37 },
-  'claude-sonnet-4-5': { input: 3.69,  output: 18.45, cache_write: 4.61, cache_read: 0.37 },
-  'claude-haiku-4-5':  { input: 1.23,  output:  6.15, cache_write: 1.54, cache_read: 0.12 },
-  'claude-haiku-4-6':  { input: 1.23,  output:  6.15, cache_write: 1.54, cache_read: 0.12 },
+  // Anthropic — Claude Code subscriber-equivalent
+  'claude-opus-4-6':         { input: 6.15, output: 30.75, cache_write: 7.69, cache_read: 0.61 },
+  'claude-opus-4-5':         { input: 6.15, output: 30.75, cache_write: 7.69, cache_read: 0.61 },
+  'claude-sonnet-4-6':       { input: 3.69, output: 18.45, cache_write: 4.61, cache_read: 0.37 },
+  'claude-sonnet-4-5':       { input: 3.69, output: 18.45, cache_write: 4.61, cache_read: 0.37 },
+  'claude-haiku-4-5':        { input: 1.23, output:  6.15, cache_write: 1.54, cache_read: 0.12 },
+  'claude-haiku-4-6':        { input: 1.23, output:  6.15, cache_write: 1.54, cache_read: 0.12 },
+  // OpenAI (opencode)
+  'gpt-5.5':                 { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
+  'gpt-5.4':                 { input: 2.50, output: 10.00, cache_write: 2.50, cache_read: 0.25 },
+  'gpt-5.4-mini':            { input: 0.20, output:  0.80, cache_write: 0.20, cache_read: 0.02 },
+  'gpt-5.3-codex':           { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
+  'gpt-5.3-codex-spark':     { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
+  'gpt-5.1-codex':           { input: 2.50, output: 10.00, cache_write: 2.50, cache_read: 0.25 },
+  // Google (opencode)
+  'gemini-3.1-pro-preview':  { input: 3.50, output: 14.00, cache_write: 3.50, cache_read: 0.875 },
+  // Moonshot (opencode)
+  'kimi-k2.6':               { input: 0.15, output:  2.50, cache_write: 0.15, cache_read: 0.015 },
 };
 
-function isBillable(model) {
-  if (!model) return false;
-  const m = model.toLowerCase();
-  return m.includes('opus') || m.includes('sonnet') || m.includes('haiku');
+function bareModel(model) {
+  // opencode stores "<provider>/<model>"; strip the provider for lookup.
+  return model && model.includes('/') ? model.split('/', 2)[1] : model;
 }
 
 function getPricing(model) {
   if (!model) return null;
-  if (PRICING[model]) return PRICING[model];
-  for (const key of Object.keys(PRICING)) {
-    if (model.startsWith(key)) return PRICING[key];
+  const bare = bareModel(model);
+  for (const candidate of [model, bare]) {
+    if (PRICING[candidate]) return PRICING[candidate];
+    for (const key of Object.keys(PRICING)) {
+      if (candidate.startsWith(key)) return PRICING[key];
+    }
   }
-  const m = model.toLowerCase();
+  // Family fallback for unrecognised Claude variants
+  const m = (bare || '').toLowerCase();
   if (m.includes('opus'))   return PRICING['claude-opus-4-6'];
   if (m.includes('sonnet')) return PRICING['claude-sonnet-4-6'];
   if (m.includes('haiku'))  return PRICING['claude-haiku-4-5'];
   return null;
+}
+
+function isBillable(model) {
+  // OpenRouter models always have an authoritative cost reported per session,
+  // so we mark them billable even when no token-rate pricing exists.
+  if (model && model.startsWith('openrouter/')) return true;
+  return getPricing(model) !== null;
 }
 
 function calcCost(model, inp, out, cacheRead, cacheCreation) {
@@ -290,6 +362,27 @@ function calcCost(model, inp, out, cacheRead, cacheCreation) {
     cacheRead     * p.cache_read  / 1e6 +
     cacheCreation * p.cache_write / 1e6
   );
+}
+
+// Per-session cost: OpenRouter (and any other source that reports authoritative
+// $) populates actual_cost; everything else falls back to token-based pricing.
+function sessionCost(s) {
+  if (s.actual_cost != null) return s.actual_cost;
+  return calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+}
+
+function sessionHasCost(s) {
+  return s.actual_cost != null || isBillable(s.model);
+}
+
+function modelCost(m) {
+  return m.actual_cost != null
+    ? m.actual_cost
+    : calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation);
+}
+
+function modelHasCost(m) {
+  return m.actual_cost != null || isBillable(m.model);
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────
@@ -312,20 +405,42 @@ const TOKEN_COLORS = {
 const MODEL_COLORS = ['#d97757','#4f8ef7','#4ade80','#a78bfa','#fbbf24','#f472b6','#34d399','#60a5fa'];
 
 // ── Time range ─────────────────────────────────────────────────────────────
-const RANGE_LABELS = { '7d': 'Last 7 Days', '30d': 'Last 30 Days', '90d': 'Last 90 Days', 'all': 'All Time' };
-const RANGE_TICKS  = { '7d': 7, '30d': 15, '90d': 13, 'all': 12 };
+const RANGE_LABELS = {
+  '3hr':  'Last 3 Hours',
+  '6hr':  'Last 6 Hours',
+  '12hr': 'Last 12 Hours',
+  '1d':   'Last 24 Hours',
+  '3d':   'Last 3 Days',
+  '7d':   'Last 7 Days',
+  '30d':  'Last 30 Days',
+  '90d':  'Last 90 Days',
+  'all':  'All Time',
+};
+const RANGE_TICKS = {
+  '3hr': 1, '6hr': 1, '12hr': 1, '1d': 2, '3d': 3,
+  '7d': 7, '30d': 15, '90d': 13, 'all': 12,
+};
+const RANGE_HOURS = { '3hr': 3, '6hr': 6, '12hr': 12, '1d': 24 };
+const RANGE_DAYS  = { '3d': 3, '7d': 7, '30d': 30, '90d': 90 };
+const VALID_RANGES = Object.keys(RANGE_LABELS);
 
+// Returns "YYYY-MM-DD HH:MM" cutoff (local time) or null for 'all'.
 function getRangeCutoff(range) {
   if (range === 'all') return null;
-  const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
   const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  if (RANGE_HOURS[range]) {
+    d.setHours(d.getHours() - RANGE_HOURS[range]);
+  } else if (RANGE_DAYS[range]) {
+    d.setDate(d.getDate() - RANGE_DAYS[range]);
+    d.setHours(0, 0, 0, 0);
+  }
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function readURLRange() {
   const p = new URLSearchParams(window.location.search).get('range');
-  return ['7d', '30d', '90d', 'all'].includes(p) ? p : '30d';
+  return VALID_RANGES.includes(p) ? p : '30d';
 }
 
 function setRange(range) {
@@ -375,6 +490,38 @@ function buildFilterUI(allModels) {
   }).join('');
 }
 
+function readURLProviders(allProviders) {
+  const param = new URLSearchParams(window.location.search).get('providers');
+  if (!param) return new Set(allProviders);
+  const fromURL = new Set(param.split(',').map(s => s.trim()).filter(Boolean));
+  return new Set(allProviders.filter(p => fromURL.has(p)));
+}
+
+function isDefaultProviderSelection(allProviders) {
+  if (selectedProviders.size !== allProviders.length) return false;
+  return allProviders.every(p => selectedProviders.has(p));
+}
+
+function buildProviderUI(allProviders) {
+  selectedProviders = readURLProviders(allProviders);
+  const container = document.getElementById('provider-checkboxes');
+  container.innerHTML = allProviders.map(p => {
+    const checked = selectedProviders.has(p);
+    return `<label class="model-cb-label ${checked ? 'checked' : ''}" data-provider="${p}">
+      <input type="checkbox" value="${p}" ${checked ? 'checked' : ''} onchange="onProviderToggle(this)">
+      ${p}
+    </label>`;
+  }).join('');
+}
+
+function onProviderToggle(cb) {
+  const label = cb.closest('label');
+  if (cb.checked) { selectedProviders.add(cb.value);    label.classList.add('checked'); }
+  else            { selectedProviders.delete(cb.value); label.classList.remove('checked'); }
+  updateURL();
+  applyFilter();
+}
+
 function onModelToggle(cb) {
   const label = cb.closest('label');
   if (cb.checked) { selectedModels.add(cb.value);    label.classList.add('checked'); }
@@ -401,8 +548,10 @@ function clearAllModels() {
 function updateURL() {
   const allModels = Array.from(document.querySelectorAll('#model-checkboxes input')).map(cb => cb.value);
   const params = new URLSearchParams();
+  const allProviders = Array.from(document.querySelectorAll('#provider-checkboxes input')).map(cb => cb.value);
   if (selectedRange !== '30d') params.set('range', selectedRange);
   if (!isDefaultModelSelection(allModels)) params.set('models', Array.from(selectedModels).join(','));
+  if (!isDefaultProviderSelection(allProviders)) params.set('providers', Array.from(selectedProviders).join(','));
   const search = params.toString() ? '?' + params.toString() : '';
   history.replaceState(null, '', window.location.pathname + search);
 }
@@ -413,9 +562,10 @@ function applyFilter() {
 
   const cutoff = getRangeCutoff(selectedRange);
 
-  // Filter daily rows by model + date range
+  // Daily rows are bucketed per UTC day; compare just the date portion of cutoff.
+  const cutoffDay = cutoff ? cutoff.slice(0, 10) : null;
   const filteredDaily = rawData.daily_by_model.filter(r =>
-    selectedModels.has(r.model) && (!cutoff || r.day >= cutoff)
+    selectedModels.has(r.model) && selectedProviders.has(r.provider) && (!cutoffDay || r.day >= cutoffDay)
   );
 
   // Daily chart: aggregate by day
@@ -442,14 +592,18 @@ function applyFilter() {
     m.turns          += r.turns;
   }
 
-  // Filter sessions by model + date range
+  // Sessions get minute-precision filtering (s.last is "YYYY-MM-DD HH:MM").
   const filteredSessions = rawData.sessions_all.filter(s =>
-    selectedModels.has(s.model) && (!cutoff || s.last_date >= cutoff)
+    selectedModels.has(s.model) && selectedProviders.has(s.provider) && (!cutoff || s.last >= cutoff)
   );
 
-  // Add session counts into modelMap
+  // Add session counts and authoritative cost (OpenRouter etc.) into modelMap
   for (const s of filteredSessions) {
-    if (modelMap[s.model]) modelMap[s.model].sessions++;
+    if (!modelMap[s.model]) continue;
+    modelMap[s.model].sessions++;
+    if (s.actual_cost != null) {
+      modelMap[s.model].actual_cost = (modelMap[s.model].actual_cost || 0) + s.actual_cost;
+    }
   }
 
   const byModel = Object.values(modelMap).sort((a, b) => (b.input + b.output) - (a.input + a.output));
@@ -472,7 +626,7 @@ function applyFilter() {
     output:         byModel.reduce((s, m) => s + m.output, 0),
     cache_read:     byModel.reduce((s, m) => s + m.cache_read, 0),
     cache_creation: byModel.reduce((s, m) => s + m.cache_creation, 0),
-    cost:           byModel.reduce((s, m) => s + calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation), 0),
+    cost:           byModel.reduce((s, m) => s + modelCost(m), 0),
   };
 
   // Update daily chart title
@@ -482,7 +636,9 @@ function applyFilter() {
   renderDailyChart(daily);
   renderModelChart(byModel);
   renderProjectChart(byProject);
-  renderSessionsTable(filteredSessions.slice(0, 20));
+  lastFilteredSessions = filteredSessions;
+  sessionsPage = 0;
+  renderSessionsPage();
   renderModelCostTable(byModel);
 }
 
@@ -577,14 +733,25 @@ function renderProjectChart(byProject) {
   });
 }
 
-function renderSessionsTable(sessions) {
-  document.getElementById('sessions-body').innerHTML = sessions.map(s => {
-    const cost = calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
-    const costCell = isBillable(s.model)
+function renderSessionsPage() {
+  const total = lastFilteredSessions.length;
+  const pages = Math.max(1, Math.ceil(total / SESSIONS_PAGE_SIZE));
+  if (sessionsPage >= pages) sessionsPage = pages - 1;
+  if (sessionsPage < 0) sessionsPage = 0;
+  const start = sessionsPage * SESSIONS_PAGE_SIZE;
+  const slice = lastFilteredSessions.slice(start, start + SESSIONS_PAGE_SIZE);
+
+  document.getElementById('sessions-body').innerHTML = slice.map(s => {
+    const cost = sessionCost(s);
+    const costCell = sessionHasCost(s)
       ? `<td class="cost">${fmtCost(cost)}</td>`
       : `<td class="cost-na">n/a</td>`;
+    const provClass = s.provider === 'opencode' ? 'oc'
+                    : s.provider === 'OpenRouter' ? 'or'
+                    : 'cc';
     return `<tr>
-      <td class="muted" style="font-family:monospace">${s.session_id}&hellip;</td>
+      <td class="muted" style="font-family:monospace">${s.session_id}${s.session_id.includes('-') ? '' : '&hellip;'}</td>
+      <td><span class="provider-tag ${provClass}">${s.provider}</span></td>
       <td>${s.project}</td>
       <td class="muted">${s.last}</td>
       <td class="muted">${s.duration_min}m</td>
@@ -595,12 +762,29 @@ function renderSessionsTable(sessions) {
       ${costCell}
     </tr>`;
   }).join('');
+
+  const shownStart = total === 0 ? 0 : start + 1;
+  const shownEnd = Math.min(start + SESSIONS_PAGE_SIZE, total);
+  document.getElementById('sessions-pager').innerHTML = `
+    <span class="page-info">${shownStart}–${shownEnd} of ${total}</span>
+    <button onclick="sessionsPageStep(-1)" ${sessionsPage === 0 ? 'disabled' : ''}>Prev</button>
+    <button onclick="sessionsPageStep(1)"  ${sessionsPage >= pages - 1 ? 'disabled' : ''}>Next</button>
+  `;
+}
+
+function sessionsPageStep(delta) {
+  sessionsPage += delta;
+  renderSessionsPage();
 }
 
 function renderModelCostTable(byModel) {
-  document.getElementById('model-cost-body').innerHTML = byModel.map(m => {
-    const cost = calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation);
-    const costCell = isBillable(m.model)
+  const sorted = [...byModel].sort((a, b) => modelCost(b) - modelCost(a));
+  document.getElementById('model-cost-body').innerHTML = sorted.map(m => {
+    const cost = m.actual_cost != null
+      ? m.actual_cost
+      : calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation);
+    const hasCost = m.actual_cost != null || isBillable(m.model);
+    const costCell = hasCost
       ? `<td class="cost">${fmtCost(cost)}</td>`
       : `<td class="cost-na">n/a</td>`;
     return `<tr>
@@ -635,7 +819,8 @@ async function loadData() {
       document.querySelectorAll('.range-btn').forEach(btn =>
         btn.classList.toggle('active', btn.dataset.range === selectedRange)
       );
-      // Build model filter (reads URL for model selection too)
+      // Build provider + model filters (each reads URL for its own selection)
+      buildProviderUI(d.all_providers || []);
       buildFilterUI(d.all_models);
     }
 
@@ -658,13 +843,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        path = self.path.split("?", 1)[0]
+        if path in ("/", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
 
-        elif self.path == "/api/data":
+        elif path == "/api/data":
             data = get_dashboard_data()
             body = json.dumps(data).encode("utf-8")
             self.send_response(200)
