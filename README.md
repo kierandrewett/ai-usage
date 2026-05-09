@@ -105,7 +105,7 @@ The `sessions` table has a `source` column ("claude-code" / "opencode" / "openro
 
 | Source | Pricing approach |
 |---|---|
-| Claude Code | Anthropic API list rates as of April 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
+| Claude Code | Anthropic API list rates as of May 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
 | opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
 | OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
 
