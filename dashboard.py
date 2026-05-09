@@ -275,7 +275,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <footer>
   <div class="footer-content">
-    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of April 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
+    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of May 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
     <p>
       GitHub: <a href="https://github.com/kierandrewett/ai-usage" target="_blank">github.com/kierandrewett/ai-usage</a>
       &nbsp;&middot;&nbsp;
@@ -298,29 +298,29 @@ const SESSIONS_PAGE_SIZE = 20;
 let lastFilteredSessions = [];
 
 // ── Pricing (per 1M tokens, USD) ───────────────────────────────────────────
-// Anthropic numbers are Claude Code subscriber-equivalent (≈59% discount on
-// list API pricing, see footer). All non-Claude entries are list API pricing
-// for the corresponding upstream provider as of April 2026 — these are
-// approximate and may need updating.
+// All entries are list API pricing for the upstream provider as of May 2026.
+// Subscriber plans (Claude Max/Pro, ChatGPT Plus, etc.) bundle usage at a
+// flat rate, so these figures are the API-equivalent cost of each session,
+// not what a subscriber actually paid out-of-pocket.
 const PRICING = {
-  // Anthropic — Claude Code subscriber-equivalent
-  'claude-opus-4-6':         { input: 6.15, output: 30.75, cache_write: 7.69, cache_read: 0.61 },
-  'claude-opus-4-5':         { input: 6.15, output: 30.75, cache_write: 7.69, cache_read: 0.61 },
-  'claude-sonnet-4-6':       { input: 3.69, output: 18.45, cache_write: 4.61, cache_read: 0.37 },
-  'claude-sonnet-4-5':       { input: 3.69, output: 18.45, cache_write: 4.61, cache_read: 0.37 },
-  'claude-haiku-4-5':        { input: 1.23, output:  6.15, cache_write: 1.54, cache_read: 0.12 },
-  'claude-haiku-4-6':        { input: 1.23, output:  6.15, cache_write: 1.54, cache_read: 0.12 },
-  // OpenAI (opencode)
-  'gpt-5.5':                 { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
-  'gpt-5.4':                 { input: 2.50, output: 10.00, cache_write: 2.50, cache_read: 0.25 },
-  'gpt-5.4-mini':            { input: 0.20, output:  0.80, cache_write: 0.20, cache_read: 0.02 },
-  'gpt-5.3-codex':           { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
-  'gpt-5.3-codex-spark':     { input: 5.00, output: 20.00, cache_write: 5.00, cache_read: 0.50 },
-  'gpt-5.1-codex':           { input: 2.50, output: 10.00, cache_write: 2.50, cache_read: 0.25 },
-  // Google (opencode)
-  'gemini-3.1-pro-preview':  { input: 3.50, output: 14.00, cache_write: 3.50, cache_read: 0.875 },
-  // Moonshot (opencode)
-  'kimi-k2.6':               { input: 0.15, output:  2.50, cache_write: 0.15, cache_read: 0.015 },
+  // Anthropic — list API pricing (cache_write = 1.25× input for 5m TTL, cache_read = 0.10× input)
+  'claude-opus-4-7':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-opus-4-6':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-opus-4-5':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-sonnet-4-6':       { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
+  'claude-sonnet-4-5':       { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
+  'claude-haiku-4-5':        { input: 1.00, output:  5.00, cache_write: 1.25, cache_read: 0.10 },
+  // OpenAI (opencode) — cache_write billed at standard input rate
+  'gpt-5.5':                 { input: 5.00, output: 30.00, cache_write: 5.00, cache_read: 0.50 },
+  'gpt-5.4':                 { input: 2.50, output: 15.00, cache_write: 2.50, cache_read: 0.25 },
+  'gpt-5.4-mini':            { input: 0.75, output:  4.50, cache_write: 0.75, cache_read: 0.075 },
+  'gpt-5.3-codex':           { input: 1.75, output: 14.00, cache_write: 1.75, cache_read: 0.175 },
+  'gpt-5.3-codex-spark':     { input: 1.75, output: 14.00, cache_write: 1.75, cache_read: 0.175 },
+  'gpt-5.1-codex':           { input: 1.75, output: 14.00, cache_write: 1.75, cache_read: 0.175 },
+  // Google (opencode) — ≤200k context tier; >200k context is roughly 2× input/output
+  'gemini-3.1-pro-preview':  { input: 2.00, output: 12.00, cache_write: 2.00, cache_read: 0.20 },
+  // Moonshot (opencode) — cache_write billed at standard input rate (no separate write SKU)
+  'kimi-k2.6':               { input: 0.95, output:  4.00, cache_write: 0.95, cache_read: 0.16 },
 };
 
 function bareModel(model) {
@@ -339,7 +339,7 @@ function getPricing(model) {
   }
   // Family fallback for unrecognised Claude variants
   const m = (bare || '').toLowerCase();
-  if (m.includes('opus'))   return PRICING['claude-opus-4-6'];
+  if (m.includes('opus'))   return PRICING['claude-opus-4-7'];
   if (m.includes('sonnet')) return PRICING['claude-sonnet-4-6'];
   if (m.includes('haiku'))  return PRICING['claude-haiku-4-5'];
   return null;
@@ -652,7 +652,7 @@ function renderStats(t) {
     { label: 'Output Tokens',  value: fmt(t.output),               sub: rangeLabel },
     { label: 'Cache Read',     value: fmt(t.cache_read),           sub: 'from prompt cache' },
     { label: 'Cache Creation', value: fmt(t.cache_creation),       sub: 'writes to prompt cache' },
-    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, Apr 2026', color: '#4ade80' },
+    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, May 2026', color: '#4ade80' },
   ];
   document.getElementById('stats-row').innerHTML = stats.map(s => `
     <div class="stat-card">
