@@ -109,6 +109,19 @@ The `sessions` table has a `source` column ("claude-code" / "opencode" / "openro
 | opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
 | OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
 
+Claude API pricing covered by this repo:
+
+| Model | Input / 1M tokens | Output / 1M tokens | Cache write / 1M tokens | Cache read / 1M tokens |
+|---|---:|---:|---:|---:|
+| `claude-fable-5` | $10.00 | $50.00 | $12.50 | $1.00 |
+| `claude-opus-4-8` | $5.00 | $25.00 | $6.25 | $0.50 |
+| `claude-opus-4-7` | $5.00 | $25.00 | $6.25 | $0.50 |
+| `claude-opus-4-6` | $5.00 | $25.00 | $6.25 | $0.50 |
+| `claude-opus-4-5` | $5.00 | $25.00 | $6.25 | $0.50 |
+| `claude-sonnet-4-6` | $3.00 | $15.00 | $3.75 | $0.30 |
+| `claude-sonnet-4-5` | $3.00 | $15.00 | $3.75 | $0.30 |
+| `claude-haiku-4-5` | $1.00 | $5.00 | $1.25 | $0.10 |
+
 For sources that go through subscription billing (GitHub Copilot via opencode, Pro/Max via Claude Code), the displayed "cost" is the **API-equivalent** — what you would have paid at metered list pricing. Your actual subscription bill will differ.
 
 ---
