@@ -275,7 +275,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <footer>
   <div class="footer-content">
-    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of May 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
+    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of June 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
     <p>
       GitHub: <a href="https://github.com/kierandrewett/ai-usage" target="_blank">github.com/kierandrewett/ai-usage</a>
       &nbsp;&middot;&nbsp;
@@ -298,12 +298,14 @@ const SESSIONS_PAGE_SIZE = 20;
 let lastFilteredSessions = [];
 
 // ── Pricing (per 1M tokens, USD) ───────────────────────────────────────────
-// All entries are list API pricing for the upstream provider as of May 2026.
+// All entries are list API pricing for the upstream provider as of June 2026.
 // Subscriber plans (Claude Max/Pro, ChatGPT Plus, etc.) bundle usage at a
 // flat rate, so these figures are the API-equivalent cost of each session,
 // not what a subscriber actually paid out-of-pocket.
 const PRICING = {
   // Anthropic — list API pricing (cache_write = 1.25× input for 5m TTL, cache_read = 0.10× input)
+  'claude-fable-5':          { input: 10.00, output: 50.00, cache_write: 12.50, cache_read: 1.00 },
+  'claude-opus-4-8':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
   'claude-opus-4-7':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
   'claude-opus-4-6':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
   'claude-opus-4-5':         { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
@@ -339,7 +341,8 @@ function getPricing(model) {
   }
   // Family fallback for unrecognised Claude variants
   const m = (bare || '').toLowerCase();
-  if (m.includes('opus'))   return PRICING['claude-opus-4-7'];
+  if (m.includes('fable'))  return PRICING['claude-fable-5'];
+  if (m.includes('opus'))   return PRICING['claude-opus-4-8'];
   if (m.includes('sonnet')) return PRICING['claude-sonnet-4-6'];
   if (m.includes('haiku'))  return PRICING['claude-haiku-4-5'];
   return null;
@@ -652,7 +655,7 @@ function renderStats(t) {
     { label: 'Output Tokens',  value: fmt(t.output),               sub: rangeLabel },
     { label: 'Cache Read',     value: fmt(t.cache_read),           sub: 'from prompt cache' },
     { label: 'Cache Creation', value: fmt(t.cache_creation),       sub: 'writes to prompt cache' },
-    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, May 2026', color: '#4ade80' },
+    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, Jun 2026', color: '#4ade80' },
   ];
   document.getElementById('stats-row').innerHTML = stats.map(s => `
     <div class="stat-card">
