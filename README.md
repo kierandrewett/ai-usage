@@ -40,6 +40,7 @@ python3 cli.py dashboard
 ```
 
 Opens the dashboard at <http://localhost:8080> after running a scan.
+Use `python3 cli.py dashboard --port 8081` if `8080` is already in use.
 
 ### OpenRouter (optional)
 
@@ -78,6 +79,9 @@ python3 cli.py stats
 
 # Scan + open the browser dashboard
 python3 cli.py dashboard
+
+# Use a different port
+python3 cli.py dashboard --port 8081
 ```
 
 The Claude Code and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
@@ -105,7 +109,7 @@ The `sessions` table has a `source` column ("claude-code" / "opencode" / "openro
 
 | Source | Pricing approach |
 |---|---|
-| Claude Code | Anthropic API list rates as of June 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
+| Claude Code | Anthropic API list rates as of July 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
 | opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
 | OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
 

@@ -395,8 +395,8 @@ function fmt(n) {
   if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
   return n.toLocaleString();
 }
-function fmtCost(c)    { return '$' + c.toFixed(4); }
-function fmtCostBig(c) { return '$' + c.toFixed(2); }
+function fmtCost(c)    { return '$' + c.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 }); }
+function fmtCostBig(c) { return '$' + c.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 // ── Chart colors ───────────────────────────────────────────────────────────
 const TOKEN_COLORS = {
@@ -655,7 +655,7 @@ function renderStats(t) {
     { label: 'Output Tokens',  value: fmt(t.output),               sub: rangeLabel },
     { label: 'Cache Read',     value: fmt(t.cache_read),           sub: 'from prompt cache' },
     { label: 'Cache Creation', value: fmt(t.cache_creation),       sub: 'writes to prompt cache' },
-    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, Jun 2026', color: '#4ade80' },
+    { label: 'Est. Cost',      value: fmtCostBig(t.cost),          sub: 'API pricing, Jul 2026', color: '#4ade80' },
   ];
   document.getElementById('stats-row').innerHTML = stats.map(s => `
     <div class="stat-card">
@@ -759,7 +759,7 @@ function renderSessionsPage() {
       <td class="muted">${s.last}</td>
       <td class="muted">${s.duration_min}m</td>
       <td><span class="model-tag">${s.model}</span></td>
-      <td class="num">${s.turns}</td>
+      <td class="num">${fmt(s.turns)}</td>
       <td class="num">${fmt(s.input)}</td>
       <td class="num">${fmt(s.output)}</td>
       ${costCell}
@@ -769,7 +769,7 @@ function renderSessionsPage() {
   const shownStart = total === 0 ? 0 : start + 1;
   const shownEnd = Math.min(start + SESSIONS_PAGE_SIZE, total);
   document.getElementById('sessions-pager').innerHTML = `
-    <span class="page-info">${shownStart}–${shownEnd} of ${total}</span>
+    <span class="page-info">${shownStart.toLocaleString()}–${shownEnd.toLocaleString()} of ${total.toLocaleString()}</span>
     <button onclick="sessionsPageStep(-1)" ${sessionsPage === 0 ? 'disabled' : ''}>Prev</button>
     <button onclick="sessionsPageStep(1)"  ${sessionsPage >= pages - 1 ? 'disabled' : ''}>Next</button>
   `;
@@ -867,8 +867,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+class DashboardServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def serve(port=8080):
-    server = HTTPServer(("localhost", port), DashboardHandler)
+    server = DashboardServer(("localhost", port), DashboardHandler)
     print(f"Dashboard running at http://localhost:{port}")
     print("Press Ctrl+C to stop.")
     try:

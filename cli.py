@@ -9,6 +9,8 @@ Commands:
 """
 
 import sys
+import argparse
+import errno
 import sqlite3
 from pathlib import Path
 from datetime import datetime, date
@@ -66,7 +68,7 @@ def fmt(n):
     return str(n)
 
 def fmt_cost(c):
-    return f"${c:.4f}"
+    return f"${c:,.4f}"
 
 def hr(char="-", width=60):
     print(char * width)
@@ -80,7 +82,7 @@ def require_db():
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
-def cmd_scan():
+def cmd_scan(args=None):
     from scanner import scan, PROJECTS_DIR
     print(f"Scanning {PROJECTS_DIR} ...")
     scan()
@@ -94,7 +96,7 @@ def cmd_scan():
     or_scan()
 
 
-def cmd_today():
+def cmd_today(args=None):
     conn = require_db()
     conn.row_factory = sqlite3.Row
     today = date.today().isoformat()
@@ -140,12 +142,12 @@ def cmd_today():
         total_cr  += r["cr"]  or 0
         total_cc  += r["cc"]  or 0
         total_turns += r["turns"]
-        print(f"  {r['model']:<30}  turns={r['turns']:<4}  in={fmt(r['inp'] or 0):<8}  out={fmt(r['out'] or 0):<8}  cost={fmt_cost(cost)}")
+        print(f"  {r['model']:<30}  turns={r['turns']:<4,}  in={fmt(r['inp'] or 0):<8}  out={fmt(r['out'] or 0):<8}  cost={fmt_cost(cost)}")
 
     hr()
-    print(f"  {'TOTAL':<30}  turns={total_turns:<4}  in={fmt(total_inp):<8}  out={fmt(total_out):<8}  cost={fmt_cost(total_cost)}")
+    print(f"  {'TOTAL':<30}  turns={total_turns:<4,}  in={fmt(total_inp):<8}  out={fmt(total_out):<8}  cost={fmt_cost(total_cost)}")
     print()
-    print(f"  Sessions today:   {sessions['cnt']}")
+    print(f"  Sessions today:   {sessions['cnt']:,}")
     print(f"  Cache read:       {fmt(total_cr)}")
     print(f"  Cache creation:   {fmt(total_cc)}")
     hr()
@@ -153,7 +155,7 @@ def cmd_today():
     conn.close()
 
 
-def cmd_stats():
+def cmd_stats(args=None):
     conn = require_db()
     conn.row_factory = sqlite3.Row
 
@@ -240,19 +242,19 @@ def cmd_stats():
     print(f"  Cache read:       {fmt(totals['cr'] or 0):<12}  (90% cheaper than input)")
     print(f"  Cache creation:   {fmt(totals['cc'] or 0):<12}  (25% premium on input)")
     print()
-    print(f"  Est. total cost:  ${total_cost:.4f}")
+    print(f"  Est. total cost:  {fmt_cost(total_cost)}")
     hr()
 
     print("  By Model:")
     for r in by_model:
         cost = calc_cost(r["model"], r["inp"] or 0, r["out"] or 0, r["cr"] or 0, r["cc"] or 0)
-        print(f"    {r['model']:<30}  sessions={r['sessions']:<4}  turns={fmt(r['turns'] or 0):<6}  "
+        print(f"    {r['model']:<30}  sessions={r['sessions']:<4,}  turns={fmt(r['turns'] or 0):<6}  "
               f"in={fmt(r['inp'] or 0):<8}  out={fmt(r['out'] or 0):<8}  cost={fmt_cost(cost)}")
 
     hr()
     print("  Top Projects:")
     for r in top_projects:
-        print(f"    {(r['project_name'] or 'unknown'):<40}  sessions={r['sessions']:<3}  "
+        print(f"    {(r['project_name'] or 'unknown'):<40}  sessions={r['sessions']:<3,}  "
               f"turns={fmt(r['turns'] or 0):<6}  tokens={fmt((r['inp'] or 0)+(r['out'] or 0))}")
 
     if daily_avg["avg_inp"]:
@@ -266,10 +268,12 @@ def cmd_stats():
     conn.close()
 
 
-def cmd_dashboard():
+def cmd_dashboard(args=None):
     import webbrowser
     import threading
     import time
+
+    port = args.port if args else 8080
 
     print("Running scan first...")
     cmd_scan()
@@ -279,34 +283,56 @@ def cmd_dashboard():
 
     def open_browser():
         time.sleep(1.0)
-        webbrowser.open("http://localhost:8080")
+        webbrowser.open(f"http://localhost:{port}")
 
-    t = threading.Thread(target=open_browser, daemon=True)
-    t.start()
-    serve(port=8080)
+    if not args or not args.no_open:
+        t = threading.Thread(target=open_browser, daemon=True)
+        t.start()
+
+    try:
+        serve(port=port)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            print(f"Port {port} is already in use. Try: python cli.py dashboard --port {port + 1}")
+            sys.exit(1)
+        raise
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-USAGE = """
-Claude Code Usage Dashboard
+def build_parser():
+    parser = argparse.ArgumentParser(description="Claude Code Usage Dashboard")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-Usage:
-  python cli.py scan       Scan JSONL files and update database
-  python cli.py today      Show today's usage summary
-  python cli.py stats      Show all-time statistics
-  python cli.py dashboard  Scan + start dashboard at http://localhost:8080
-"""
+    scan_parser = subparsers.add_parser("scan", help="Scan JSONL files and update database")
+    scan_parser.set_defaults(func=cmd_scan)
 
-COMMANDS = {
-    "scan": cmd_scan,
-    "today": cmd_today,
-    "stats": cmd_stats,
-    "dashboard": cmd_dashboard,
-}
+    today_parser = subparsers.add_parser("today", help="Show today's usage summary")
+    today_parser.set_defaults(func=cmd_today)
+
+    stats_parser = subparsers.add_parser("stats", help="Show all-time statistics")
+    stats_parser.set_defaults(func=cmd_stats)
+
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="Scan and start dashboard server",
+        description="Scan all sources and start the dashboard server.",
+    )
+    dashboard_parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to serve the dashboard on (default: 8080)",
+    )
+    dashboard_parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not open the dashboard in a browser",
+    )
+    dashboard_parser.set_defaults(func=cmd_dashboard)
+
+    return parser
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(USAGE)
-        sys.exit(0)
-    COMMANDS[sys.argv[1]]()
+    parsed_args = build_parser().parse_args()
+    parsed_args.func(parsed_args)
