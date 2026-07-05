@@ -1,8 +1,8 @@
 """
-cli.py - Command-line interface for the Claude Code usage dashboard.
+cli.py - Command-line interface for the AI usage dashboard.
 
 Commands:
-  scan      - Scan JSONL files and update the database
+  scan      - Scan local/remote usage sources and update the database
   today     - Print today's usage summary
   stats     - Print all-time usage statistics
   dashboard - Scan + open browser + start dashboard server
@@ -86,6 +86,10 @@ def cmd_scan(args=None):
     from scanner import scan, PROJECTS_DIR
     print(f"Scanning {PROJECTS_DIR} ...")
     scan()
+
+    from codex_scanner import scan as codex_scan, CODEX_SESSIONS_DIR
+    print(f"\nScanning {CODEX_SESSIONS_DIR} ...")
+    codex_scan()
 
     from opencode_scanner import scan as oc_scan, OPENCODE_DB_PATH
     print(f"\nScanning {OPENCODE_DB_PATH} ...")
@@ -228,7 +232,7 @@ def cmd_stats(args=None):
 
     print()
     hr("=")
-    print("  Claude Code Usage - All-Time Statistics")
+    print("  AI Usage - All-Time Statistics")
     hr("=")
 
     first_date = (totals["first"] or "")[:10]
@@ -301,10 +305,10 @@ def cmd_dashboard(args=None):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Claude Code Usage Dashboard")
+    parser = argparse.ArgumentParser(description="AI Usage Dashboard")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan_parser = subparsers.add_parser("scan", help="Scan JSONL files and update database")
+    scan_parser = subparsers.add_parser("scan", help="Scan all sources and update database")
     scan_parser.set_defaults(func=cmd_scan)
 
     today_parser = subparsers.add_parser("today", help="Show today's usage summary")

@@ -12,6 +12,7 @@ DB_PATH = Path.home() / ".claude" / "usage.db"
 
 
 def get_dashboard_data(db_path=DB_PATH):
+    db_path = Path(db_path)
     if not db_path.exists():
         return {"error": "Database not found. Run: python cli.py scan"}
 
@@ -45,15 +46,28 @@ def get_dashboard_data(db_path=DB_PATH):
     """).fetchall()
 
     SOURCE_TO_PROVIDER = {
-        "opencode":   "opencode",
-        "openrouter": "OpenRouter",
-        "claude-code": "Claude Code",
+        "opencode":        "opencode",
+        "openrouter":      "OpenRouter",
+        "claude-code":     "Claude Code",
+        "codex-cli":       "Codex CLI",
+        "codex-exec":      "Codex Exec",
+        "codex-subagent":  "Codex Subagent",
+        "codex":           "Codex",
     }
+
+    def provider_name(source):
+        if not source:
+            return "Claude Code"
+        if source in SOURCE_TO_PROVIDER:
+            return SOURCE_TO_PROVIDER[source]
+        if source.startswith("codex-"):
+            return "Codex " + source[len("codex-"):].replace("-", " ").title()
+        return source.replace("-", " ").title()
 
     daily_by_model = [{
         "day":            r["day"],
         "model":          r["model"],
-        "provider":       SOURCE_TO_PROVIDER.get(r["source"], "Claude Code"),
+        "provider":       provider_name(r["source"]),
         "input":          r["input"] or 0,
         "output":         r["output"] or 0,
         "cache_read":     r["cache_read"] or 0,
@@ -80,7 +94,7 @@ def get_dashboard_data(db_path=DB_PATH):
             duration_min = round((t2 - t1).total_seconds() / 60, 1)
         except Exception:
             duration_min = 0
-        provider = SOURCE_TO_PROVIDER.get(r["source"], "Claude Code")
+        provider = provider_name(r["source"])
         # OpenRouter "sessions" are daily rollups — date is more useful than
         # the synthetic id prefix (which is identical for every OR row).
         if r["source"] == "openrouter":
@@ -312,7 +326,7 @@ const PRICING = {
   'claude-sonnet-4-6':       { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
   'claude-sonnet-4-5':       { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
   'claude-haiku-4-5':        { input: 1.00, output:  5.00, cache_write: 1.25, cache_read: 0.10 },
-  // OpenAI (opencode) — cache_write billed at standard input rate
+  // OpenAI (opencode/Codex) — cache_write billed at standard input rate
   'gpt-5.5':                 { input: 5.00, output: 30.00, cache_write: 5.00, cache_read: 0.50 },
   'gpt-5.4':                 { input: 2.50, output: 15.00, cache_write: 2.50, cache_read: 0.25 },
   'gpt-5.4-mini':            { input: 0.75, output:  4.50, cache_write: 0.75, cache_read: 0.075 },

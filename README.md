@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-> A fork of [phuryn/claude-usage](https://github.com/phuryn/claude-usage) extended with **opencode** and **OpenRouter** as additional data sources, provider tagging, sub-day time ranges, pagination, and authoritative cost reporting where the upstream provider exposes it.
+> A fork of [phuryn/claude-usage](https://github.com/phuryn/claude-usage) extended with **Codex**, **opencode**, and **OpenRouter** as additional data sources, provider tagging, sub-day time ranges, pagination, and authoritative cost reporting where the upstream provider exposes it.
 
-A local dashboard that pulls together usage from every coding-agent tool you use — Claude Code, opencode, and OpenRouter — into one SQLite-backed view with charts, per-model cost, per-provider filters, and per-session history.
+A local dashboard that pulls together usage from every coding-agent tool you use — Claude Code, Codex CLI/exec/subagents, opencode, and OpenRouter — into one SQLite-backed view with charts, per-model cost, per-provider filters, and per-session history.
 
 ![Dashboard](docs/screenshot.png)
 
@@ -15,6 +15,7 @@ A local dashboard that pulls together usage from every coding-agent tool you use
 | Source | How it's read | Cost basis |
 |---|---|---|
 | **Claude Code** (CLI, VS Code extension, dispatched sessions) | Local JSONL transcripts in `~/.claude/projects/` | Anthropic API list pricing |
+| **Codex** (CLI, exec harness, subagents) | Local JSONL rollouts in `~/.codex/sessions/` | OpenAI API-equivalent list pricing |
 | **opencode** | Local SQLite DB at `~/.local/share/opencode/opencode.db` | Upstream provider list pricing (OpenAI, Google, Moonshot, …) |
 | **OpenRouter** | `GET /api/v1/activity` (last 30 UTC days) | OpenRouter's reported `usage` USD |
 
@@ -84,7 +85,7 @@ python3 cli.py dashboard
 python3 cli.py dashboard --port 8081
 ```
 
-The Claude Code and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
+The Claude Code, Codex, and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
 
 ---
 
@@ -92,7 +93,8 @@ The Claude Code and opencode scanners are incremental (track per-file mtime / pe
 
 ```
 ┌─ Claude Code JSONLs ─┐
-│  opencode.db         │──▶ scanner.py / opencode_scanner.py / openrouter_scanner.py
+│  Codex rollouts      │
+│  opencode.db         │──▶ scanner.py / codex_scanner.py / opencode_scanner.py / openrouter_scanner.py
 │  OpenRouter /activity│         │
 └──────────────────────┘         ▼
                           ~/.claude/usage.db (SQLite)
@@ -101,7 +103,7 @@ The Claude Code and opencode scanners are incremental (track per-file mtime / pe
                           dashboard.py (localhost:8080)
 ```
 
-The `sessions` table has a `source` column ("claude-code" / "opencode" / "openrouter") that drives the Provider tag and per-provider filter. Where a source reports authoritative cost (OpenRouter), it's stored in `actual_cost_usd` and the dashboard prefers it over token-based estimates.
+The `sessions` table has a `source` column ("claude-code" / "codex-cli" / "codex-exec" / "codex-subagent" / "opencode" / "openrouter") that drives the Provider tag and per-provider filter. Where a source reports authoritative cost (OpenRouter), it's stored in `actual_cost_usd` and the dashboard prefers it over token-based estimates.
 
 ---
 
@@ -110,6 +112,7 @@ The `sessions` table has a `source` column ("claude-code" / "opencode" / "openro
 | Source | Pricing approach |
 |---|---|
 | Claude Code | Anthropic API list rates as of July 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
+| Codex | OpenAI API-equivalent list pricing for the model reported by the rollout. ChatGPT/Codex plan billing may not match these metered estimates. |
 | opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
 | OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
 
@@ -135,6 +138,7 @@ For sources that go through subscription billing (GitHub Copilot via opencode, P
 | File | Purpose |
 |------|---------|
 | `scanner.py` | Parses Claude Code JSONLs, writes to `~/.claude/usage.db` |
+| `codex_scanner.py` | Parses Codex rollout JSONLs from `~/.codex/sessions/` |
 | `opencode_scanner.py` | Reads opencode's SQLite DB into the same usage.db |
 | `openrouter_scanner.py` | Pulls OpenRouter daily activity rollups (requires `OPENROUTER_API_KEY`) |
 | `dashboard.py` | HTTP server + single-page HTML/JS dashboard |
