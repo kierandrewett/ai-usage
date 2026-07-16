@@ -1,5 +1,6 @@
 __pycache__/
 server.log
+pricing.json
 .env
 .env.*
 !.env.example

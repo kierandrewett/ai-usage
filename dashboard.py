@@ -53,6 +53,9 @@ def get_dashboard_data(db_path=DB_PATH):
         "codex-exec":      "Codex Exec",
         "codex-subagent":  "Codex Subagent",
         "codex":           "Codex",
+        "oh-my-pi":        "Oh My Pi",
+        "oh-my-pi-subagent": "Oh My Pi Subagent",
+        "oh-my-pi-advisor":  "Oh My Pi Advisor",
     }
 
     def provider_name(source):
@@ -62,6 +65,8 @@ def get_dashboard_data(db_path=DB_PATH):
             return SOURCE_TO_PROVIDER[source]
         if source.startswith("codex-"):
             return "Codex " + source[len("codex-"):].replace("-", " ").title()
+        if source.startswith("oh-my-pi-"):
+            return "Oh My Pi " + source[len("oh-my-pi-"):].replace("-", " ").title()
         return source.replace("-", " ").title()
 
     daily_by_model = [{
@@ -289,7 +294,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <footer>
   <div class="footer-content">
-    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of June 2026; actual costs for Max/Pro subscribers differ. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
+    <p>Claude cost estimates use Anthropic API pricing (<a href="https://claude.com/pricing#api" target="_blank">claude.com/pricing#api</a>) as of June 2026; actual costs for Max/Pro subscribers differ. OpenRouter and Oh My Pi sessions prefer provider-reported costs when available. opencode sessions are priced against the upstream provider's published rates (OpenAI, Google, Moonshot) and are approximate &mdash; see <code>dashboard.py</code> to override.</p>
     <p>
       GitHub: <a href="https://github.com/kierandrewett/ai-usage" target="_blank">github.com/kierandrewett/ai-usage</a>
       &nbsp;&middot;&nbsp;
@@ -339,8 +344,18 @@ const PRICING = {
   'kimi-k2.6':               { input: 0.95, output:  4.00, cache_write: 0.95, cache_read: 0.16 },
 };
 
+// Canonical prices synced from models.dev (pricing_sync.py) overlay the built-in
+// table above — filling in models we don't hardcode and correcting stale rates.
+// Empty when no sync has run, so the built-in table remains the fallback.
+Object.assign(PRICING, window.__PRICING_OVERRIDE || {});
+
 function bareModel(model) {
   // opencode stores "<provider>/<model>"; strip the provider for lookup.
+  // Internal "claude-clanker-<real-model>--<hex>" wrappers embed the real model
+  // name; unwrap it so the wrapped model gets priced instead of falling through.
+  if (model && model.startsWith('claude-clanker-')) {
+    return model.slice('claude-clanker-'.length).split('--', 1)[0];
+  }
   return model && model.includes('/') ? model.split('/', 2)[1] : model;
 }
 
@@ -383,23 +398,27 @@ function calcCost(model, inp, out, cacheRead, cacheCreation) {
 
 // Per-session cost: OpenRouter (and any other source that reports authoritative
 // $) populates actual_cost; everything else falls back to token-based pricing.
+// A reported cost of exactly 0 means "unreported" (some Oh My Pi providers, e.g.
+// kimi-code / xai-oauth OAuth sessions, log no cost) — fall back to token pricing
+// so real usage isn't shown as $0. Genuinely-free sessions have ~no tokens, so
+// the token estimate is ~0 anyway.
 function sessionCost(s) {
-  if (s.actual_cost != null) return s.actual_cost;
+  if (s.actual_cost) return s.actual_cost;
   return calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
 }
 
 function sessionHasCost(s) {
-  return s.actual_cost != null || isBillable(s.model);
+  return s.actual_cost > 0 || isBillable(s.model);
 }
 
 function modelCost(m) {
-  return m.actual_cost != null
+  return m.actual_cost
     ? m.actual_cost
     : calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation);
 }
 
 function modelHasCost(m) {
-  return m.actual_cost != null || isBillable(m.model);
+  return m.actual_cost > 0 || isBillable(m.model);
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────
@@ -618,7 +637,7 @@ function applyFilter() {
   for (const s of filteredSessions) {
     if (!modelMap[s.model]) continue;
     modelMap[s.model].sessions++;
-    if (s.actual_cost != null) {
+    if (s.actual_cost) {
       modelMap[s.model].actual_cost = (modelMap[s.model].actual_cost || 0) + s.actual_cost;
     }
   }
@@ -797,10 +816,8 @@ function sessionsPageStep(delta) {
 function renderModelCostTable(byModel) {
   const sorted = [...byModel].sort((a, b) => modelCost(b) - modelCost(a));
   document.getElementById('model-cost-body').innerHTML = sorted.map(m => {
-    const cost = m.actual_cost != null
-      ? m.actual_cost
-      : calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation);
-    const hasCost = m.actual_cost != null || isBillable(m.model);
+    const cost = modelCost(m);
+    const hasCost = modelHasCost(m);
     const costCell = hasCost
       ? `<td class="cost">${fmtCost(cost)}</td>`
       : `<td class="cost-na">n/a</td>`;
@@ -855,6 +872,19 @@ setInterval(loadData, 30000);
 """
 
 
+def _pricing_override_script():
+    """A <script> that sets window.__PRICING_OVERRIDE from pricing.json (synced
+    from models.dev via pricing_sync.py). Returns an empty override if the sync
+    hasn't run or the module is unavailable, so the built-in table still applies."""
+    try:
+        from pricing_sync import load_pricing
+
+        overrides = load_pricing()
+    except Exception:
+        overrides = {}
+    return f"<script>window.__PRICING_OVERRIDE = {json.dumps(overrides)};</script>\n"
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
@@ -862,10 +892,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
+            html = HTML_TEMPLATE.replace("<script>", _pricing_override_script() + "<script>", 1)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
+            self.wfile.write(html.encode("utf-8"))
 
         elif path == "/api/data":
             data = get_dashboard_data()

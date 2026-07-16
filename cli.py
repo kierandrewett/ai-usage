@@ -90,6 +90,10 @@ def cmd_scan(args=None):
     from codex_scanner import scan as codex_scan, CODEX_SESSIONS_DIR
     print(f"\nScanning {CODEX_SESSIONS_DIR} ...")
     codex_scan()
+    from pi_scanner import scan as pi_scan, SESSION_DIRS as PI_SESSION_DIRS
+    print(f"\nScanning Oh My Pi sessions ({', '.join(str(p) for p in PI_SESSION_DIRS)}) ...")
+    pi_scan()
+
 
     from opencode_scanner import scan as oc_scan, OPENCODE_DB_PATH
     print(f"\nScanning {OPENCODE_DB_PATH} ...")
@@ -98,6 +102,26 @@ def cmd_scan(args=None):
     from openrouter_scanner import scan as or_scan, API_URL as OR_API_URL
     print(f"\nFetching {OR_API_URL} ...")
     or_scan()
+
+    cmd_sync_pricing()
+
+
+def cmd_sync_pricing(args=None):
+    """Refresh model pricing from models.dev (best-effort; never fatal)."""
+    refresh = bool(getattr(args, "refresh", False))
+    try:
+        from pricing_sync import generate, _db_bare_models, PRICING_PATH
+        from scanner import DB_PATH
+        import json as _json
+
+        names = _db_bare_models(DB_PATH) if Path(DB_PATH).exists() else set()
+        print("\nSyncing model pricing from models.dev ...")
+        pricing, unresolved = generate(names, refresh=refresh)
+        PRICING_PATH.write_text(_json.dumps(pricing, indent=2, sort_keys=True) + "\n")
+        print(f"  Priced {len(pricing)} models -> {PRICING_PATH.name}"
+              + (f" ({len(unresolved)} unresolved, using built-in fallback)" if unresolved else ""))
+    except Exception as e:
+        print(f"  Pricing sync skipped: {e}")
 
 
 def cmd_today(args=None):
@@ -316,6 +340,14 @@ def build_parser():
 
     stats_parser = subparsers.add_parser("stats", help="Show all-time statistics")
     stats_parser.set_defaults(func=cmd_stats)
+
+    pricing_parser = subparsers.add_parser(
+        "sync-pricing", help="Refresh model pricing from models.dev"
+    )
+    pricing_parser.add_argument(
+        "--refresh", action="store_true", help="Force re-download of the models.dev catalog"
+    )
+    pricing_parser.set_defaults(func=cmd_sync_pricing)
 
     dashboard_parser = subparsers.add_parser(
         "dashboard",

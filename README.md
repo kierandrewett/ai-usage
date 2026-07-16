@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-> A fork of [phuryn/claude-usage](https://github.com/phuryn/claude-usage) extended with **Codex**, **opencode**, and **OpenRouter** as additional data sources, provider tagging, sub-day time ranges, pagination, and authoritative cost reporting where the upstream provider exposes it.
+> A fork of [phuryn/claude-usage](https://github.com/phuryn/claude-usage) extended with **Codex**, **Oh My Pi**, **opencode**, and **OpenRouter** as additional data sources, provider tagging, sub-day time ranges, pagination, and authoritative cost reporting where the upstream provider exposes it.
 
-A local dashboard that pulls together usage from every coding-agent tool you use — Claude Code, Codex CLI/exec/subagents, opencode, and OpenRouter — into one SQLite-backed view with charts, per-model cost, per-provider filters, and per-session history.
+A local dashboard that pulls together usage from every coding-agent tool you use — Claude Code, Codex CLI/exec/subagents, Oh My Pi, opencode, and OpenRouter — into one SQLite-backed view with charts, per-model cost, per-provider filters, and per-session history.
 
 ![Dashboard](docs/screenshot.png)
 
@@ -16,6 +16,7 @@ A local dashboard that pulls together usage from every coding-agent tool you use
 |---|---|---|
 | **Claude Code** (CLI, VS Code extension, dispatched sessions) | Local JSONL transcripts in `~/.claude/projects/` | Anthropic API list pricing |
 | **Codex** (CLI, exec harness, subagents) | Local JSONL rollouts in `~/.codex/sessions/` | OpenAI API-equivalent list pricing |
+| **Oh My Pi** (sessions, subagents, advisor) | Local JSONL sessions in `~/.pi/agent/sessions/` or `~/.omp/agent/sessions/` | Provider-reported per-turn costs from session `usage.cost` when present |
 | **opencode** | Local SQLite DB at `~/.local/share/opencode/opencode.db` | Upstream provider list pricing (OpenAI, Google, Moonshot, …) |
 | **OpenRouter** | `GET /api/v1/activity` (last 30 UTC days) | OpenRouter's reported `usage` USD |
 
@@ -85,7 +86,7 @@ python3 cli.py dashboard
 python3 cli.py dashboard --port 8081
 ```
 
-The Claude Code, Codex, and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
+The Claude Code, Codex, Oh My Pi, and opencode scanners are incremental (track per-file mtime / per-session updated-at). OpenRouter's daily rollups are wiped+reinserted per-(date, model, endpoint) on each scan so today's growing numbers stay correct.
 
 ---
 
@@ -94,7 +95,8 @@ The Claude Code, Codex, and opencode scanners are incremental (track per-file mt
 ```
 ┌─ Claude Code JSONLs ─┐
 │  Codex rollouts      │
-│  opencode.db         │──▶ scanner.py / codex_scanner.py / opencode_scanner.py / openrouter_scanner.py
+│  Oh My Pi sessions   │──▶ scanner.py / codex_scanner.py / pi_scanner.py / opencode_scanner.py / openrouter_scanner.py
+│  opencode.db         │
 │  OpenRouter /activity│         │
 └──────────────────────┘         ▼
                           ~/.claude/usage.db (SQLite)
@@ -103,7 +105,7 @@ The Claude Code, Codex, and opencode scanners are incremental (track per-file mt
                           dashboard.py (localhost:8080)
 ```
 
-The `sessions` table has a `source` column ("claude-code" / "codex-cli" / "codex-exec" / "codex-subagent" / "opencode" / "openrouter") that drives the Provider tag and per-provider filter. Where a source reports authoritative cost (OpenRouter), it's stored in `actual_cost_usd` and the dashboard prefers it over token-based estimates.
+The `sessions` table has a `source` column ("claude-code" / "codex-cli" / "codex-exec" / "codex-subagent" / "oh-my-pi" / "oh-my-pi-subagent" / "oh-my-pi-advisor" / "opencode" / "openrouter") that drives the Provider tag and per-provider filter. Where a source reports authoritative cost (OpenRouter and Oh My Pi), it's stored in `actual_cost_usd` and the dashboard prefers it over token-based estimates.
 
 ---
 
@@ -113,8 +115,13 @@ The `sessions` table has a `source` column ("claude-code" / "codex-cli" / "codex
 |---|---|
 | Claude Code | Anthropic API list rates as of July 2026 — see [claude.com/pricing#api](https://claude.com/pricing#api). Subscribers on Pro/Max have a different (subscription-based) actual cost structure. |
 | Codex | OpenAI API-equivalent list pricing for the model reported by the rollout. ChatGPT/Codex plan billing may not match these metered estimates. |
-| opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.). These are approximate and may need updating as providers change pricing — edit `PRICING` in `dashboard.py`. |
+| Oh My Pi | Uses the per-turn `usage.cost.total` recorded in local Pi/OMP session JSONL when present; token pricing fallback applies only where a session lacks reported cost. |
+| opencode | List rates for the upstream provider (OpenAI, Google, Moonshot, etc.), sourced from models.dev (see below). |
 | OpenRouter | OpenRouter's own reported `usage` field (paid + BYOK inference) — shown verbatim, no client-side computation. |
+
+### Where token prices come from
+
+Token-based estimates use a built-in `PRICING` table in `dashboard.py` as a fallback, overlaid at serve time by a canonical price table synced from [models.dev](https://models.dev) (`pricing_sync.py` → `pricing.json`). The sync resolves one price per model by preferring the **first-party vendor** (openai, anthropic, deepseek, …) and falling back to the most common cross-gateway price, so reseller discounts/markups don't skew the number. It also fills in models the built-in table doesn't hardcode — otherwise those show `$0` despite real usage. Refresh with `python cli.py sync-pricing` (runs automatically after `scan`; add `--refresh` to bypass the 24h catalog cache).
 
 Claude API pricing covered by this repo:
 
@@ -139,10 +146,12 @@ For sources that go through subscription billing (GitHub Copilot via opencode, P
 |------|---------|
 | `scanner.py` | Parses Claude Code JSONLs, writes to `~/.claude/usage.db` |
 | `codex_scanner.py` | Parses Codex rollout JSONLs from `~/.codex/sessions/` |
+| `pi_scanner.py` | Parses Oh My Pi JSONL sessions from `~/.pi/agent/sessions/` and `~/.omp/agent/sessions/` |
 | `opencode_scanner.py` | Reads opencode's SQLite DB into the same usage.db |
 | `openrouter_scanner.py` | Pulls OpenRouter daily activity rollups (requires `OPENROUTER_API_KEY`) |
+| `pricing_sync.py` | Resolves canonical per-model prices from models.dev into `pricing.json` |
 | `dashboard.py` | HTTP server + single-page HTML/JS dashboard |
-| `cli.py` | `scan`, `today`, `stats`, `dashboard` commands |
+| `cli.py` | `scan`, `today`, `stats`, `sync-pricing`, `dashboard` commands |
 
 ---
 
